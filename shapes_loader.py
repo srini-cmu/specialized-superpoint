@@ -52,7 +52,7 @@ class ShapesLoader(torch.utils.data.Dataset):
     
     def __getitem__(self,idx):
         #print('Idx:{0} Img:{1}x{2} Pts:{3}'.format(idx,self.imgs[idx].shape[0],self.imgs[idx].shape[1],len(self.pts[idx])))
-        return self.imgs[idx],list(self.pts[idx]),self.dset[idx]
+        return self.imgs[idx],self.pts[idx],self.dset[idx]
                             
     def get_img(self,shape_idx,idx):    
         img = self.dataset_path+'/'+self.shape_dirs[shape_idx]+'/images/'+self.mode+'/'+str(idx)+'.png'
@@ -63,3 +63,7 @@ class ShapesLoader(torch.utils.data.Dataset):
         return np.load(pt)
     
     
+def collate_fn(batch_list):
+    imgs,pixloc,didx = zip(*batch_list)
+    imgs = torch.tensor(np.asarray([img for img in imgs]),dtype=torch.float)
+    return imgs,pixloc,didx

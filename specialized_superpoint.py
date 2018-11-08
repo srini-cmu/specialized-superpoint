@@ -26,16 +26,33 @@ def train(params):
         mode = 'training'
         
     train_loader = DataLoader(ShapesLoader(mode=mode,dataset_path='./datasets/synthetic_shapes_v6/'),
-                              batch_size=params.batch,shuffle=True)
+                              batch_size=params.batch,shuffle=True,collate_fn=collate_fn)
     
     model = SuperPointNet()
     optimizer = torch.optim.Adam(model.parameters(),lr=params.lr,weight_decay=params.weightdecay)
-
+    criterion = nn.CrossEntropyLoss() #reduction='elementwise_sum')
+    
     for batch_idx, (imgs,pts,didx) in enumerate(train_loader):
         
-        outputs = model(imgs.float().unsqueeze(1))
+        bnum = imgs.shape[0]
+        h,w = imgs[0].shape
+
+        ipt,desc = model(imgs.float().unsqueeze(1))
+        #pt bnum x 65 x hc x wc
         
         pdb.set_trace()
+
+        #probs bnum x 65 x hc x w
+        loss = criterion(ipt,pts)
+        #probs = softmax(ipt)
+        
+        #probs bnum x 64 x hc x wc
+        #probs = probs[:,:-1,:,:]
+        
+        #probs bnum x h x w
+        #probs = probs.reshape(bnum,h,w)
+        
+        
         
 
     
