@@ -30,6 +30,7 @@ class ShapesLoader(torch.utils.data.Dataset):
 
         self.imgs = []
         self.pts = []
+        self.dset = []
         
         for shape in self.shape_dirs:
             print('Loading images and points from '+shape)
@@ -37,9 +38,9 @@ class ShapesLoader(torch.utils.data.Dataset):
             shape_path = self.dataset_path+'/'+shape+'/images/'+self.mode+'/'
             num_files = len(os.listdir(shape_path))
                             
-            self.imgs = [np.array(Image.open(shape_path+str(idx)+'.png')) for idx in range(num_files)]
-            self.pts = [np.array(np.load(pt_path+str(idx)+'.npy')) for idx in range(num_files)]
-        
+            self.imgs += [np.array(Image.open(shape_path+str(idx)+'.png')) for idx in range(num_files)]
+            self.pts += [np.array(np.load(pt_path+str(idx)+'.npy')) for idx in range(num_files)]
+            self.dset += [shape+str(idx) for idx in range(num_files)]
         tend = time.time()
         
         print('Finished loading the synthetic shapes dataset. Took:{0:.3f} s'.format(tend-tbegin))   
@@ -51,7 +52,7 @@ class ShapesLoader(torch.utils.data.Dataset):
     
     def __getitem__(self,idx):
         #print('Idx:{0} Img:{1}x{2} Pts:{3}'.format(idx,self.imgs[idx].shape[0],self.imgs[idx].shape[1],len(self.pts[idx])))
-        return self.imgs[idx],list(self.pts[idx])
+        return self.imgs[idx],list(self.pts[idx]),self.dset[idx]
                             
     def get_img(self,shape_idx,idx):    
         img = self.dataset_path+'/'+self.shape_dirs[shape_idx]+'/images/'+self.mode+'/'+str(idx)+'.png'
