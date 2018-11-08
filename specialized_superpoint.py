@@ -12,6 +12,7 @@ import argparse
 import sys
 import os
 from shapes_loader import *
+from base_model import *
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import *
 
@@ -19,12 +20,33 @@ def train(params):
     
     writer = SummaryWriter(log_dir='runs/'+params.runid)
 
-    train_loader = DataLoader(ShapesLoader(mode='training',dataset_path='./datasets/synthetic_shapes_v6/'),batch_size=params.batch,shuffle=True)
+    if params.dev:
+        mode = 'validation'
+    else:
+        mode = 'training'
+        
+    train_loader = DataLoader(ShapesLoader(mode=mode,dataset_path='./datasets/synthetic_shapes_v6/'),
+                              batch_size=params.batch,shuffle=True)
+    
+    model = SuperPointNet()
+    optimizer = torch.optim.Adam(model.parameters(),lr=params.lr,weight_decay=params.weightdecay)
+
+    for batch_idx, (imgs,pts,didx) in enumerate(train_loader):
+        
+        outputs = model(imgs.float().unsqueeze(1))
+        
+        pdb.set_trace()
+        
+
+    
 def main():
     parser = argparse.ArgumentParser(description='Specialized Superpoint')
     parser.add_argument('--train',action='store_true')
+    parser.add_argument('--dev',action='store_true')
     parser.add_argument('--test',action='store_true')
     parser.add_argument('--validate',action='store_true')
+    parser.add_argument('--weightdecay',default=1e-6,type=float)
+    parser.add_argument('--lr',default=1e-3,type=float)
     parser.add_argument('--batch',default=64,type=int)
     
     params = parser.parse_args()
