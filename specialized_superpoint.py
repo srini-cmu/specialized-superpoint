@@ -15,6 +15,7 @@ from shapes_loader import *
 from base_model import *
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import *
+from PIL import Image
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -107,8 +108,66 @@ def train(params):
         #probs bnum x h x w
         #probs = probs.reshape(bnum,h,w)
         
+def validate(params):
+    
+    writer = SummaryWriter(log_dir='runs/'+params.runid)
+
+    val_loader = DataLoader(ShapesLoader(mode='validation',dataset_path='./datasets/synthetic_shapes_v6/'),
+                              batch_size=params.batch,collate_fn=collate_fn)
+    
+    if params.model is None:
+        print('Need a model to run the validation')
+
+    
+    else:
+        model = torch.load(params.model)
+        pdb.set_trace()
+        model = model.to(DEVICE)
         
+    model.eval()
+    
+    
+    optimizer = torch.optim.Adam(model.parameters(),lr=params.lr,weight_decay=params.weightdecay)
+    
+    criterion = nn.Softmax(dim=1) #reduction='elementwise_sum')
         
+    threshold = 0.02
+
+    for batch_idx, (imgs,pix_locs,didx) in enumerate(val_loader):
+
+        ipt,desc = model(imgs.float().unsqueeze(1).to(DEVICE))
+        #ipt bnum x 65 x hc x wc
+        bnum, dims, hc, wc = ipt.shape
+
+        ipt_sm = criterion(ipt)
+        #ignore the dustbin entry
+        ipt_sm = ipt_sm[:,:-1,:,:]
+        
+        #find the max entry and confidence
+        idx_conf,idx_locs = ipt_sm.max(dim=1)
+        
+        idx_mask = idx_conf > threshold
+        #convert this to pixel location
+        #for each image in the batch
+        for b in range(bnum):
+            #img = Image.fromarray(data, 'RGB')
+            print('Image:',didx[b])
+            print('Ground truth pixels:')
+            print(pix_locs[b])
+            
+            print('Estimated pixels:')
+            for x in range(hc):
+                for y in range(wc):
+                    if idx_mask[b,x,y] == 1:
+                        #location within the block
+                        block_x = idx_locs[b,x,y]/8
+                        block_y = idx_locs[b,x,y]%8
+                        
+                        #location in the image
+                        px = x * block_x
+                        py = y * block_y
+                        print('x:{0} y:{1}'.format(px,py))
+                        
 
     
 def main():
@@ -117,6 +176,7 @@ def main():
     parser.add_argument('--dev',action='store_true')
     parser.add_argument('--test',action='store_true')
     parser.add_argument('--validate',action='store_true')
+    parser.add_argument('--model')
     parser.add_argument('--epoch',default=1000,type=int)
     parser.add_argument('--weightdecay',default=1e-6,type=float)
     parser.add_argument('--lr',default=1e-3,type=float)
