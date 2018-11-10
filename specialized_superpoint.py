@@ -16,6 +16,7 @@ from base_model import *
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import *
 from PIL import Image
+import matplotlib.pyplot as plt
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -113,7 +114,7 @@ def validate(params):
     writer = SummaryWriter(log_dir='runs/'+params.runid)
 
     val_loader = DataLoader(ShapesLoader(mode='validation',dataset_path='./datasets/synthetic_shapes_v6/'),
-                              batch_size=params.batch,collate_fn=collate_fn)
+                              batch_size=params.batch,collate_fn=collate_fn,shuffle=True)
     
     if params.model is None:
         print('Need a model to run the validation')
@@ -121,7 +122,6 @@ def validate(params):
     
     else:
         model = torch.load(params.model)
-        pdb.set_trace()
         model = model.to(DEVICE)
         
     model.eval()
@@ -133,8 +133,13 @@ def validate(params):
         
     threshold = 0.02
 
+    img_file = open(params.outfile+'_img.txt','w')
+    gt_file = open(params.outfile+'_gt.csv','w')
+    val_file = open(params.outfile+'_val.csv','w')
+    
     for batch_idx, (imgs,pix_locs,didx) in enumerate(val_loader):
 
+        h,w = imgs[0].shape
         ipt,desc = model(imgs.float().unsqueeze(1).to(DEVICE))
         #ipt bnum x 65 x hc x wc
         bnum, dims, hc, wc = ipt.shape
@@ -150,25 +155,35 @@ def validate(params):
         #convert this to pixel location
         #for each image in the batch
         for b in range(bnum):
-            #img = Image.fromarray(data, 'RGB')
-            print('Image:',didx[b])
-            print('Ground truth pixels:')
-            print(pix_locs[b])
+            img_file.write(didx[b]+'\n')
             
-            print('Estimated pixels:')
+            print('Image:',didx[b])
+            #print('Ground truth pixels:')
+            #print(pix_locs[b])
+            
+            for l in pix_locs[b]:
+                gt_file.write(str(l[0])+', '+str(l[1])+', ')
+            gt_file.write('\n')
+
+            np_pix_locs = np.array(pix_locs[b])
+            #print('Estimated pixels:')
             for x in range(hc):
                 for y in range(wc):
+                
                     if idx_mask[b,x,y] == 1:
-                        #location within the block
-                        block_x = idx_locs[b,x,y]/8
-                        block_y = idx_locs[b,x,y]%8
-                        
-                        #location in the image
-                        px = x * block_x
-                        py = y * block_y
-                        print('x:{0} y:{1}'.format(px,py))
-                        
 
+                        #location in the image
+                        px = x*8 +(idx_locs[b,x,y]/8)
+                        py = y*8 + (idx_locs[b,x,y]%8)
+                        #print('x:{0} y:{1}'.format(px,py))
+                        val_file.write(str(px.item())+', '+str(py.item())+', ')
+                
+            val_file.write('\n')
+            
+    gt_file.close()
+    val_file.close()
+    img_file.close()
+        
     
 def main():
     parser = argparse.ArgumentParser(description='Specialized Superpoint')
@@ -177,6 +192,7 @@ def main():
     parser.add_argument('--test',action='store_true')
     parser.add_argument('--validate',action='store_true')
     parser.add_argument('--model')
+    parser.add_argument('--outfile',default='validation_output')
     parser.add_argument('--epoch',default=1000,type=int)
     parser.add_argument('--weightdecay',default=1e-6,type=float)
     parser.add_argument('--lr',default=1e-3,type=float)

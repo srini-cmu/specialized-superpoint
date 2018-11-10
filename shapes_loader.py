@@ -40,7 +40,7 @@ class ShapesLoader(torch.utils.data.Dataset):
                             
             self.imgs += [np.array(Image.open(shape_path+str(idx)+'.png')) for idx in range(num_files)]
             self.pts += [np.array(np.load(pt_path+str(idx)+'.npy')) for idx in range(num_files)]
-            self.dset += [shape+str(idx) for idx in range(num_files)]
+            self.dset += [shape+'_'+str(idx) for idx in range(num_files)]
         tend = time.time()
         
         print('Finished loading the synthetic shapes dataset. Took:{0:.3f} s'.format(tend-tbegin))   
