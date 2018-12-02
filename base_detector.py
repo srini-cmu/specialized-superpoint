@@ -125,10 +125,7 @@ def validate(params):
         model = model.to(DEVICE)
         
     model.eval()
-    
-    
-    optimizer = torch.optim.Adam(model.parameters(),lr=params.lr,weight_decay=params.weightdecay)
-    
+        
     criterion = nn.Softmax(dim=1) #reduction='elementwise_sum')
         
     threshold = 0.02
@@ -184,6 +181,34 @@ def validate(params):
     val_file.close()
     img_file.close()
         
+
+def visualize(params):
+    writer = SummaryWriter(log_dir='runs/'+params.runid)
+
+    if params.model is None:
+        print('Need a model to run visualization')
+    
+    else:
+        model = torch.load(params.model)
+        model = model.to(DEVICE)
+        
+    model.eval()
+
+    val_loader = DataLoader(ShapesLoader(mode='validation',dataset_path='./datasets/synthetic_shapes_v6/'),
+                          batch_size=params.batch,collate_fn=collate_fn,shuffle=True)
+
+    
+    criterion = nn.Softmax(dim=1) #reduction='elementwise_sum')
+        
+    threshold = 0.02
+    
+    for batch_idx, (imgs,pix_locs,didx) in enumerate(val_loader):
+
+        h,w = imgs[0].shape
+        ipt,desc = model(imgs.float().unsqueeze(1).to(DEVICE))
+        #ipt bnum x 65 x hc x wc
+        pdb.set_trace()
+        writer.add_image('Image', x, n_iter)
     
 def main():
     parser = argparse.ArgumentParser(description='Specialized Superpoint')
@@ -191,6 +216,7 @@ def main():
     parser.add_argument('--dev',action='store_true')
     parser.add_argument('--test',action='store_true')
     parser.add_argument('--validate',action='store_true')
+    parser.add_argument('--visualize',action='store_true')
     parser.add_argument('--model')
     parser.add_argument('--outfile',default='validation_output')
     parser.add_argument('--epoch',default=1000,type=int)
@@ -210,6 +236,9 @@ def main():
         
     if params.test:
         test(params)
+        
+    if params.visualize:
+        visualize(params)
 
         
 if __name__ == '__main__':    
