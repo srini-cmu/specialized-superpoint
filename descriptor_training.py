@@ -62,7 +62,7 @@ def descriptor_loss(desc, warped_desc, homographies):
     batch_size = desc.shape[0]
     Hc, Wc = desc.shape[-2:]
     
-    p_hw = torch.stack(torch.meshgrid((torch.arange(Hc), torch.arange(Wc))), dim=-1).float()#.to(DEVICE)
+    p_hw = torch.stack(torch.meshgrid((torch.arange(Hc), torch.arange(Wc))), dim=-1).float().to(DEVICE)
     p_hw = p_hw * 8 + 8 // 2
     warped_p_hw, bound, mask = warp_point(homographies, p_hw)
     p_hw = p_hw.view(batch_size,Hc,Wc,1,1,2).float()
@@ -75,7 +75,7 @@ def descriptor_loss(desc, warped_desc, homographies):
 
     loss = ld * s * torch.clamp(mp - dot_prod, min=0.) + (1-s) * torch.clamp(dot_prod - mn, min=0.)
     
-    mask_tensor = torch.Tensor(mask / 255)
+    mask_tensor = torch.Tensor(mask / 255).to(DEVICE)
     mask_split = mask_tensor.split(8, 2) # dim 2
     mask_stack = [st.reshape(mask_tensor.shape[0],Hc,1,8*8) for st in mask_split]
     mask_out = torch.cat(mask_stack,2)
@@ -94,7 +94,8 @@ def train(params):
 
 
     plant_imgs = os.listdir(params.dset_path)
-    
+    print('Loaded {} images for training'.format(len(plant_imgs)))
+          
     if params.dev:
         #just choose 100 images for dev set
         plant_imgs = plant_imgs[:100]
@@ -124,7 +125,7 @@ def train(params):
             ipt_warps,desc_warps = model(warps.float().unsqueeze(1).to(DEVICE))
             
             #Calculate the descriptor loss
-            loss = descriptor_loss(desc_imgs.to('cpu'),desc_warps.to('cpu'),homographies.to('cpu'))
+            loss = descriptor_loss(desc_imgs,desc_warps,homographies.to(DEVICE))
             
             loss.backward()
             optimizer.step()
@@ -132,7 +133,8 @@ def train(params):
 
             epoch_loss += loss.item()
             
-            print('\x1b[2K\rEpoch {0} Loss:{1:.3f} Batch idx:{2}'.format(e+1,loss.item(),batch_idx),end='\r')
+            percent_complete = params.batch * batch_idx * 100. / len(plant_imgs)
+            print('\x1b[2K\rEpoch {0} Loss:{1:.3f} Batch {2:.2f} (idx:{3})'.format(e+1,loss.item(),percent_complete,batch_idx),end='\r')
             img_count += bnum
 
         print('\x1b[2K\rEnd of epoch {0} Loss:{1:.5f}'.format(e+1,epoch_loss))
