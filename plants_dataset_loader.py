@@ -22,6 +22,10 @@ class PlantDatasetLoader(torch.utils.data.Dataset):
         self.plant_imgs = plant_imgs
         self.dwn_smpl = downsample_percent
         
+        self.dim1 = int(476 * self.dwn_smpl)
+        self.dim2 = int(720 * self.dwn_smpl)
+        print('Setting image resolution to {}x{}'.format(self.dim1,self.dim2))
+        
     def __len__(self):
         return len(self.plant_imgs)
     
@@ -35,7 +39,7 @@ class PlantDatasetLoader(torch.utils.data.Dataset):
     def __getitem__(self,idx):
 
         filename = self.dataset_path + self.plant_imgs[idx]
-        img = Image.open(filename).resize((int(476*self.dwn_smpl),int(720*self.dwn_smpl)),Image.ANTIALIAS).convert('L') #load image as grayscale
+        img = Image.open(filename).resize((self.dim1,self.dim2),Image.ANTIALIAS).convert('L') #load image as grayscale
         original = np.array(img)
         warped,invH = self.warp_img(img)
         return original,warped,invH,filename

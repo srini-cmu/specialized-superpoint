@@ -105,7 +105,7 @@ def train(params):
         #just choose 100 images for dev set
         plant_imgs = plant_imgs[:100]
         
-    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,downsample_percent=0.5),
+    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,downsample_percent=0.2),
                               batch_size=params.batch,shuffle=True,collate_fn=plant_dataset_collate_fn)
     
     model = SuperPointNet()
@@ -142,11 +142,12 @@ def train(params):
             
             percent_complete = params.batch * batch_idx * 100. / len(plant_imgs)
             print('\x1b[2K\rEpoch {0} Loss:{1:.3f} '.format(e+1,loss.item())+
-                  'Elapsed:{0:.2f} '.format(time.time()-begin)+
+                  'Elapsed:{0:.2f}min '.format((time.time()-begin)/60.)+
                   'Batch {0:.2f} (idx:{1})'.format(percent_complete,batch_idx),end='\r')
             img_count += bnum
 
-        print('\x1b[2K\rEnd of epoch {0} Loss:{1:.5f}'.format(e+1,epoch_loss))
+        elapsed = (time.time() - begin)/60.
+        print('\x1b[2K\rEnd of epoch {0} Loss:{1:.5f} Took:{2:.2f}min'.format(e+1,epoch_loss,elapsed))
         
         save_model(model,e,epoch_loss,params.runid)
         
