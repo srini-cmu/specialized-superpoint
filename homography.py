@@ -25,8 +25,6 @@ from shapes_loader import *
 from base_model import *
 
 # In[55]:
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 def warp_point(homo, pts, need_mask=True):
     """
@@ -46,9 +44,9 @@ def warp_point(homo, pts, need_mask=True):
     W = pts.shape[2] # width
     pts = pts.view(N,-1,2) # N x P x 2
     P = pts.shape[1] # pt_num
-    pts = torch.cat((pts,torch.ones(N,P,1).to(DEVICE)),dim=-1)
+    pts = torch.cat((pts,torch.ones(N,P,1)),dim=-1)
     pts = torch.transpose(pts,1,2) # N x 3 x P
-    matHomo = flat2mat(homo,DEVICE)  # homo should be of size N * 8
+    matHomo = flat2mat(homo)  # homo should be of size N * 8
     #matHomo = flat2mat(homo).repeat(B,1,1) # N x 3 x 3
     
     res = torch.bmm(matHomo,pts) # N x 3 x P
@@ -70,7 +68,7 @@ def warp_point(homo, pts, need_mask=True):
             mask = Image.new("L", (W*8, H*8), "white")
             mask = mask.transform(size=(W*8, H*8), 
                             method=Image.PERSPECTIVE, 
-                            data=homo[i].cpu().numpy(),
+                            data=homo[i].numpy(),
                             resample=Image.NEAREST)
             masks.append(np.array(mask))
         masks = np.stack(masks, axis=0)
@@ -422,12 +420,12 @@ def invert_homography(H):
     invH = torch.cat([torch.inverse(matH[i,:,:]) for i in range(matH.shape[0])]).view(matH.shape[0],3,3)
     return mat2flat(invH)
 
-def flat2mat(H,DEVICE='cpu'):
+def flat2mat(H):
     """
     Converts a flattened homography with shape '[N, 8]' to its
     corresponding homography matrix with shape '[N, 3, 3]'.
     """
-    return torch.reshape(torch.cat((H, torch.ones(H.shape[0],1).to(DEVICE)), dim=1), [-1,3,3])
+    return torch.reshape(torch.cat((H, torch.ones(H.shape[0],1)), dim=1), [-1,3,3])
 
 def mat2flat(H):
     """

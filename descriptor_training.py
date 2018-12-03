@@ -22,6 +22,14 @@ from homography import *
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+def df(x):
+    print(x.shape,end='')
+    print(' Diff:',x.requires_grad,end='')
+    print(' Mean:',x.mean().item(),end='')
+    print(' Max:',x.max().item(),end='')
+    print(' Min:',x.min().item())
+    
+
 def save_model(model,epoch,dist,runid):
     path = os.getcwd()
     outdir = os.path.join(path,str(runid))
@@ -55,26 +63,24 @@ def log_settings(params):
 mp = 1
 mn = 0.2
 ld = 250
-
 # should use the raw descriptor output from the network
 def descriptor_loss(desc, warped_desc, homographies):
-
     batch_size = desc.shape[0]
     Hc, Wc = desc.shape[-2:]
     
-    p_hw = torch.stack(torch.meshgrid((torch.arange(Hc), torch.arange(Wc))), dim=-1).float().to(DEVICE)
+    p_hw = torch.stack(torch.meshgrid((torch.arange(Hc), torch.arange(Wc))), dim=-1).float()
     p_hw = p_hw * 8 + 8 // 2
     warped_p_hw, bound, mask = warp_point(homographies, p_hw)
-    p_hw = p_hw.view(batch_size,Hc,Wc,1,1,2).float()
+    p_hw = p_hw.view(1,Hc,Wc,1,1,2).float()
     warped_p_hw = warped_p_hw.view(batch_size,1,1,Hc,Wc,2).float()
-    s = torch.le(torch.norm(p_hw-warped_p_hw,p=2,dim=-1), 8).float()
+    s = torch.le(torch.norm(p_hw-warped_p_hw,p=2,dim=-1), 8).float().to(DEVICE)
 
     desc = desc.view((batch_size,Hc,Wc,1,1,-1))
     warped_desc = warped_desc.view((batch_size,1,1,Hc,Wc,-1))
     dot_prod = torch.sum(desc*warped_desc, dim=-1)
 
     loss = ld * s * torch.clamp(mp - dot_prod, min=0.) + (1-s) * torch.clamp(dot_prod - mn, min=0.)
-    
+
     mask_tensor = torch.Tensor(mask / 255).to(DEVICE)
     mask_split = mask_tensor.split(8, 2) # dim 2
     mask_stack = [st.reshape(mask_tensor.shape[0],Hc,1,8*8) for st in mask_split]
@@ -86,7 +92,6 @@ def descriptor_loss(desc, warped_desc, homographies):
     normalization = torch.sum(mask_out) * (Hc * Wc)
     loss = torch.sum(loss * mask_out) / normalization
     return loss
-
 
 def train(params):
     
@@ -116,6 +121,8 @@ def train(params):
         epoch_loss = 0
         img_count = 0
         
+        begin = time.time()
+        
         for batch_idx, (imgs,warps,homographies,didx) in enumerate(train_loader):
             
             #ipt bnum x 65 x hc x wc
@@ -125,7 +132,7 @@ def train(params):
             ipt_warps,desc_warps = model(warps.float().unsqueeze(1).to(DEVICE))
             
             #Calculate the descriptor loss
-            loss = descriptor_loss(desc_imgs,desc_warps,homographies.to(DEVICE))
+            loss = descriptor_loss(desc_imgs,desc_warps,homographies)
             
             loss.backward()
             optimizer.step()
@@ -134,7 +141,9 @@ def train(params):
             epoch_loss += loss.item()
             
             percent_complete = params.batch * batch_idx * 100. / len(plant_imgs)
-            print('\x1b[2K\rEpoch {0} Loss:{1:.3f} Batch {2:.2f} (idx:{3})'.format(e+1,loss.item(),percent_complete,batch_idx),end='\r')
+            print('\x1b[2K\rEpoch {0} Loss:{1:.3f} '.format(e+1,loss.item())+
+                  'Elapsed:{0:.2f} '.format(time.time()-begin)+
+                  'Batch {0:.2f} (idx:{1})'.format(percent_complete,batch_idx),end='\r')
             img_count += bnum
 
         print('\x1b[2K\rEnd of epoch {0} Loss:{1:.5f}'.format(e+1,epoch_loss))
