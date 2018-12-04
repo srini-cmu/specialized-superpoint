@@ -93,6 +93,36 @@ def descriptor_loss(desc, warped_desc, homographies):
     loss = torch.sum(loss * mask_out) / normalization
     return loss
 
+
+def feature_point_loss(ipt, pix_locs):
+
+    #ipt bnum x 65 x hc x wc
+    bnum, dims, hc, wc = ipt.shape
+
+    #for pixels in each image, divide by eight to find which sector it belongs to
+    #modulo by 8 to find the value in each sector
+    dim_locs = [(torch.tensor(pix_locs[i])/8).int() for i in range(len(pix_locs))]
+    dim_val = [(torch.tensor(pix_locs[i])%8).int() for i in range(len(pix_locs))]
+
+    #create the encoded vector
+    pts = torch.ones(bnum,hc,wc)*64 #initialize to dustbin values which will be cleared if there is a true value
+
+    #TODO: Make this faster
+    #for each image in the batch
+    for b in range(len(dim_locs)):
+
+        #for each pixel location
+        for i in range(len(dim_locs[b])):
+            pts[b,dim_locs[b][i][0],dim_locs[b][i][1]] = 8*dim_val[b][i][0] +  dim_val[b][i][1]
+
+    pts = pts.long()
+    #pdb.set_trace()
+
+    #probs bnum x 65 x hc x w
+    loss = F.cross_entropy(ipt.to(DEVICE),pts.long().to(DEVICE))
+    return loss
+
+    
 def train(params):
     
     writer = SummaryWriter(log_dir='runs/'+params.runid)
@@ -116,6 +146,8 @@ def train(params):
     
     optimizer = torch.optim.Adam(model.parameters(),lr=params.lr,weight_decay=params.weightdecay)
     
+    balance_factor = 1.
+    
     for e in range(params.epoch):
         
         epoch_loss = 0
@@ -132,7 +164,12 @@ def train(params):
             ipt_warps,desc_warps = model(warps.float().unsqueeze(1).to(DEVICE))
             
             #Calculate the descriptor loss
-            loss = descriptor_loss(desc_imgs,desc_warps,homographies)
+            descriptor_loss = descriptor_loss(desc_imgs,desc_warps,homographies)
+            
+            img_feature_point_loss = feature_point_loss(ipt_imgs,img_pix_locs)
+            warp_feature_point_loss = feature_point_loss(ipt_warps,warp_pix_locs)
+            
+            loss = balance_factor * descriptor_loss + img_feature_point_loss + warp_feature_point_loss
             
             loss.backward()
             optimizer.step()
