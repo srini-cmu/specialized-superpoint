@@ -42,26 +42,37 @@ def warp_point(homo, pts, need_mask=True):
     """
     N = homo.shape[0]
     pts = pts.unsqueeze(0).expand(N, -1, -1, -1)
-    H = pts.shape[1] # height
-    W = pts.shape[2] # width
+    H = pts.shape[1] # height :: y
+    W = pts.shape[2] # width :: x
     pts = pts.view(N,-1,2) # N x P x 2
+    # swap from [y,x,1] to [x,y,1]
+    temp = torch.tensor(pts[:,:,0])
+    pts[:,:,0] = torch.tensor(pts[:,:,1])
+    pts[:,:,1] = temp
     P = pts.shape[1] # pt_num
+    
     pts = torch.cat((pts,torch.ones(N,P,1)),dim=-1)
+
     pts = torch.transpose(pts,1,2) # N x 3 x P
-    matHomo = flat2mat(homo)  # homo should be of size N * 8
+    matHomo = flat2mat(invert_homography(homo))  # homo should be of size N * 8
     #matHomo = flat2mat(homo).repeat(B,1,1) # N x 3 x 3
     
     res = torch.bmm(matHomo,pts) # N x 3 x P
     res = res/res[:,2,:].unsqueeze(1) # normalize by z
 
     # check out of bound value
-    bound_1 = (res>H*8) + (res<0) # look at dim1
-    bound_2 = (res>W*8) + (res<0) # look at dim2 
+    bound_1 = (res>W*8) + (res<0) # look at dim1, x
+    bound_2 = (res>H*8) + (res<0) # look at dim2, y
     bound_1[:,1,:] = 0 # dim2 not your business
     bound_2[:,0,:] = 0 # dim1 not your business
     bound = bound_1+bound_2 # combine
     bound = 1-(bound.sum(dim=1)>=1) # invert: now 1 in bound means a point is valid
     
+    # swap from [x,y,1] to [y,x,1]. res: [N,3,P]
+    temp = torch.tensor(res[:,0,:])
+    res[:,0,:] = torch.tensor(res[:,1,:])
+    res[:,1,:] = temp
+
     # mask work
     masks = []
     if need_mask:
