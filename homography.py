@@ -485,7 +485,6 @@ def sample_homography(
 # res = res/res[2]
 # print(res)
 
-<<<<<<< HEAD
 # # test homography sampling
 # homography = sample_homography(shape)
 
@@ -500,8 +499,6 @@ def sample_homography(
 # print(res)
 
 
-=======
->>>>>>> ef7ddea293ba714f8d99d8dae70c5cf2135d651e
 # In[8]:
 
 
