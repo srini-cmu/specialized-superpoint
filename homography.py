@@ -154,7 +154,43 @@ def show_results(results, num_to_show):
         plt.imshow(counts[:,:,i+1])
 
 
-# In[6]:
+def homo_adapt_helper(image, net):
+    """
+    INPUT: image should be a numpy array of size [height, width].. 
+            net is the base detector
+    OUTPUT: pts of size (pt_sz, 2), [x,y] 
+    """
+    # hyper paramter
+    threshold = 0.9 # threshold to select final aggregation. Here it can only be int (1,2,3,...). 
+                    # 1 means that one warped image indicates this pixel as feature points
+                    # 2 means that two warped image indicates this pixel as feature points
+                    # now 0.9 is used, which means that as long as one warped image says this is 
+                    # a feature point, the function outputs it.
+    config = dict()
+    config['threshold'] = 0.4 # the threshold to select points in every warped image
+    config['aggregation'] = 'pts' # 'mean'
+    config['num'] = 50 # how many homography adaptation to perform per image
+    config['patch_ratio'] = 0.8
+    # run homography adaptation
+    net.eval()
+    with torch.no_grad():
+        a = homography_adaptation(Image.fromarray(image).convert('L'), net, config)
+    prob = a['prob']
+    width = prob.shape[3]*8
+    prob = prob.squeeze().view(64, prob.shape[2]*prob.shape[3])
+    prob_list = []
+    for col in range(prob.shape[1]):
+        prob_list.append(prob[:,col].view(8,8))
+    prob = torch.cat(torch.cat(prob_list, dim=1).split(width,1))
+    
+    px = []
+    py = []
+    for x in range(prob.shape[0]):
+        for y in range(prob.shape[1]):
+            if prob[x][y] > threshold:
+                px.append(x)
+                py.append(y)
+    return np.transpose(np.array([px,py]))
 
 
 def homography_adaptation(image, net, config):
@@ -169,14 +205,25 @@ def homography_adaptation(image, net, config):
     test = image
     # convert image to torch tensor
     image = torch.from_numpy(np.array(test))
-    # get the shape
+    # get the shapeust have same number of dimensions: got 4 and 
     shape = torch.Tensor([image.shape[0], image.shape[1]]).type(torch.FloatTensor)
     # inference on original image
-    probs, _ = net(image.float().unsqueeze(0).unsqueeze(1).to(DEVICE))
+    probs, _ = net(image.float().unsqueeze(0).unsqueeze(1).cuda())
     # get the dust_bin out first, later cat in
-    dust_bin = probs[:,-1,:,:].unsqueeze(0).cpu()
+    dust_bin = probs[:,-1,:,:].unsqueeze(0).cpu() # 1x1x37x50
+    #
+    small_height = probs.shape[2] # 37
+    small_width = probs.shape[3] # 50
+    #
     # global variable for aggregation, will be concat at last dimension
-    probs_to_cat = probs[:,:-1,:,:].view(1, 1, probs.shape[2]*8, probs.shape[3]*8).unsqueeze(-1).cpu()
+    probs_to_cat = probs[:,:-1,:,:].squeeze().view(64, small_height*small_width)
+    prob_list = []
+    for col in range(probs_to_cat.shape[1]):
+        prob_list.append(probs_to_cat[:,col].view(8,8))
+    probs_to_cat = torch.cat(torch.cat(prob_list, dim=1).split(small_width*8,1)).unsqueeze(0).unsqueeze(0).unsqueeze(-1).cpu()
+        
+#     probs_to_cat = probs[:,:-1,:,:].view(1, 1, probs.shape[2]*8, probs.shape[3]*8).unsqueeze(-1).cpu()
+    #print("original probs:", probs_to_cat.numpy())
     counts = torch.ones(probs_to_cat.shape)
     images = image.unsqueeze(-1).cpu()
     patches = []
@@ -190,23 +237,42 @@ def homography_adaptation(image, net, config):
         # apply homography on color scale and grayscale
         test_warped = test.transform(size=test.size, 
                              method=Image.PERSPECTIVE, 
-                             data=test_H, 
+                             data=test_H,# test_H, # test_inv_H, 
                              resample=Image.BILINEAR)
         image_warped = torch.from_numpy(np.array(test_warped))
         # inference on the warped image
-        ipt_patch, _ = net(image_warped.unsqueeze(0).unsqueeze(1).float().to(DEVICE))
+        ipt_patch, _ = net(image_warped.unsqueeze(0).unsqueeze(1).float().cuda())
         # aggregate the probablities:
-        # Get rid of dust bin: 1 x 65 x 37 x 50 -> N x 64 x 37 x50 -> N x 1 x 296 x 400
+        # Get rid of dust bin: 1 x 65 x 37 x 50 -> 1 x 64 x 37 x50 -> 1 x 1 x 296 x 400
         # apply warp to the patch and concatenate
-        prob = ipt_patch[:,:-1,:,:].view(1, 1, ipt_patch.shape[2]*8, ipt_patch.shape[3]*8).unsqueeze(-1)
+#         prob = ipt_patch[:,:-1,:,:].view(1, 1, ipt_patch.shape[2]*8, ipt_patch.shape[3]*8).cpu()
+        
+        # 1,64,37,50 -> 296,400
+        this_dust_bin = ipt_patch[:,-1,:,:].unsqueeze(1).cpu() # 1 x 1 x 37 x 50
+        prob = ipt_patch[:,:-1,:,:].squeeze().view(64, small_width*small_height)
+        prob_list = []
+        for col in range(prob.shape[1]):
+            prob_list.append(prob[:,col].view(8,8))
+        prob = torch.cat(torch.cat(prob_list, dim=1).split(small_width*8,1)).cpu() # 296 * 400
+        
+        #print("warped probs:", prob.numpy())
+        prob_img = Image.fromarray(prob.numpy())
+        prob_img = prob_img.transform(size=(ipt_patch.shape[3]*8, ipt_patch.shape[2]*8), 
+                    method=Image.PERSPECTIVE,
+                    data=test_inv_H, #test_inv_H, # test_H,
+                    resample=Image.BILINEAR)
+        # print("unwarped probs:",np.array(prob_img))
+        prob_proj = torch.from_numpy(np.array(prob_img)).unsqueeze(0).unsqueeze(0).unsqueeze(-1)
         # warp the mask to correct
         count = Image.new("L", (ipt_patch.shape[3]*8, ipt_patch.shape[2]*8), "white")
         count = count.transform(size=(ipt_patch.shape[3]*8, ipt_patch.shape[2]*8), 
                         method=Image.PERSPECTIVE, 
-                        data=test_inv_H, 
+                        data=test_inv_H, #test_inv_H,# test_H, 
                         resample=Image.NEAREST)
         # aggregate prob
-        probs_to_cat = torch.cat((probs_to_cat,prob.cpu()),dim=-1)
+        dust_bin = torch.cat((dust_bin,this_dust_bin),dim=0)
+        # aggregate prob
+        probs_to_cat = torch.cat((probs_to_cat,prob_proj.cpu()),dim=-1)
         # aggregate counts
         counts = torch.cat((counts,
                             torch.from_numpy(np.array(count)).type(torch.FloatTensor).unsqueeze(0).unsqueeze(0).unsqueeze(-1)),
@@ -215,7 +281,8 @@ def homography_adaptation(image, net, config):
         images = torch.cat((images,image_warped.unsqueeze(-1).cpu()),dim=-1)
         # aggregate patch
         patches += [patch.cpu()]
-    
+    #
+#     print('probs_to_cat shape',probs_to_cat.shape)
     # aggregation done 
     counts_sum = torch.sum(counts, dim=-1)
     max_prob,_ = torch.max(probs_to_cat, dim=-1)
@@ -223,24 +290,40 @@ def homography_adaptation(image, net, config):
     # check aggregation method
     if config['aggregation'] == 'max':
         probs = max_prob
-    elif config['aggregation'] == 'sum':
+    elif config['aggregation'] == 'mean':
         probs = mean_prob
+    elif config['aggregation'] == 'pts':
+        prob_sum = torch.zeros(1,64,small_height,small_width)
+        for h in range(probs_to_cat.shape[-1]):
+            prob_to_cat = probs_to_cat[:,:,:,:,h]
+            prob_split = prob_to_cat.squeeze(0).split(8,2)
+            prob_stack = [st.reshape(1, small_height, 1, 8*8) for st in prob_split]
+            prob_to_cat = torch.cat(prob_stack,2).permute(0,3,1,2)
+            prob_to_cat = torch.cat((prob_to_cat, dust_bin[h].unsqueeze(1)),dim=1)
+            prob_to_cat = F.softmax(prob_to_cat, dim=1)
+#             print (torch.sum(prob_to_cat,dim=1))
+            prob_to_cat = prob_to_cat[:,:-1,:,:]
+            mask = prob_to_cat > config['threshold']
+            prob_to_cat[mask] = 1
+            prob_to_cat[1-mask] = 0
+            prob_sum += prob_to_cat
+        probs = prob_sum
     else:
         raise ValueError('Unkown aggregation method: {}'.format(config['aggregation']))
     # cat back the dust bin
-    probs = probs.view(1,64,dust_bin.shape[2],dust_bin.shape[3])
-    probs = torch.cat((probs,dust_bin),dim=1)
+    if config['aggregation'] != 'pts':
+        # 1, 1, 296, 400
+        probs_split = probs.squeeze(0).split(8,2)
+        probs_stack = [st.reshape(1, small_height, 1, 8*8) for st in probs_split]
+        probs = torch.cat(probs_stack,2).permute(0,3,1,2) # 1, 64, 37, 50
+        probs = torch.cat((probs,dust_bin),dim=1)
     
     return {'prob':probs, 'patches':patches, 'images':images, 'counts':counts}
 
-
-# In[7]:
-
-
 def sample_homography(
         shape, perspective=True, scaling=True, rotation=True, translation=True,
-        n_scales=5, n_angles=25, scaling_amplitude=0.5, perspective_amplitude_x=0.2,
-        perspective_amplitude_y=0.2, patch_ratio=0.85, max_angle=1.57,
+        n_scales=8, n_angles=25, scaling_amplitude=0.5, perspective_amplitude_x=0.2,
+        perspective_amplitude_y=0.2, patch_ratio=0.9, max_angle=1.57,
         allow_artifacts=False, translation_overflow=0.):
     """Sample a random valid homography.
 
@@ -299,7 +382,7 @@ def sample_homography(
     # sample several scales, check collision with borders, randomly pick a valid one
     if scaling:
         scales = torch.ones([1+n_scales])
-        scales[:-1] = torch.from_numpy(truncated_normal(-scaling_amplitude, scaling_amplitude, scaling_amplitude/2, my_mean=1, sz=n_scales))
+        scales[:-1] = torch.from_numpy(truncated_normal(1-scaling_amplitude, 1+scaling_amplitude, scaling_amplitude/2, my_mean=1, sz=n_scales))
         center = torch.mean(pts2, dim=0, keepdim=True)
         scales = scales.unsqueeze(1).unsqueeze(1)
         scaled = (pts2-center).unsqueeze(0) * scales + center
@@ -315,7 +398,7 @@ def sample_homography(
             scaled_boolean = ( (scaled >= 0.) & (scaled < 1.) )
             valid = ( (scaled_boolean).sum(dim=(1,2)) == 8 ).nonzero().squeeze(1) # get the index of valid
         # get the index
-        idx = valid[torch.randint(low=0, high=6, size=(1,),dtype=torch.int32)[0]]
+        idx = valid[torch.randint(low=0, high=valid.shape[0], size=(1,),dtype=torch.int32)[0]]
         pts2 = scaled[idx]
         
 #     print('scale is:', scales[idx], 'center is:', center)
@@ -387,6 +470,19 @@ def sample_homography(
 #     p_mat = torch.t(torch.FloatTensor([[pts2[i][j] for i in range(4) for j in range(2)]]))
 #     homography = torch.t(torch.from_numpy(np.linalg.lstsq(a_mat, p_mat)[0]))
     return homography, pts2
+
+# # test homography sampling
+# homography = sample_homography(shape)
+
+# homo = flat2mat(homography)
+# invHomo = flat2mat(invert_homography(homography))
+
+# res = torch.matmul(homo, torch.Tensor([0.,300.,1])).squeeze(0)
+# res = res/res[2]
+# print(res)
+# res = torch.matmul(invHomo, res).squeeze(0)
+# res = res/res[2]
+# print(res)
 
 # # test homography sampling
 # homography = sample_homography(shape)
