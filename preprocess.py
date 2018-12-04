@@ -81,6 +81,6 @@ if __name__ == '__main__':
         hist_img = hist.equalize(img)
     
         
-        cv2.imwrite(os.path.join(outdir,img_f[1]),hist_img)
+        cv2.imwrite(os.path.join(outdir,img_f[1][:-4]+'.jpg'),hist_img)
         
     print('\nFinished processing all the images')
