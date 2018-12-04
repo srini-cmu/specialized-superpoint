@@ -187,9 +187,9 @@ def homo_adapt_helper(image, net):
     
     px = []
     py = []
-    for x in range(prob.shape[0]):
-        for y in range(prob.shape[1]):
-            if prob[x][y] > threshold:
+    for y in range(prob.shape[0]):
+        for x in range(prob.shape[1]):
+            if prob[y][x] > threshold:
                 px.append(x)
                 py.append(y)
     return np.transpose(np.array([px,py]))
@@ -208,7 +208,6 @@ def homography_adaptation(image, net, config):
     image = torch.from_numpy(np.array(test))
     # get the shapeust have same number of dimensions: got 4 and 
     shape = torch.Tensor([image.shape[0], image.shape[1]]).type(torch.FloatTensor)
-    print("shape",shape)
     # inference on original image
     probs, _ = net(image.float().unsqueeze(0).unsqueeze(1).cuda())
     # get the dust_bin out first, later cat in
