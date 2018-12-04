@@ -208,6 +208,7 @@ def homography_adaptation(image, net, config):
     image = torch.from_numpy(np.array(test))
     # get the shapeust have same number of dimensions: got 4 and 
     shape = torch.Tensor([image.shape[0], image.shape[1]]).type(torch.FloatTensor)
+    print("shape",shape)
     # inference on original image
     probs, _ = net(image.float().unsqueeze(0).unsqueeze(1).cuda())
     # get the dust_bin out first, later cat in
@@ -337,7 +338,7 @@ def sample_homography(
     iteratively projected, scaled, rotated and translated.
 
     Arguments:
-        shape: A rank-2 `Tensor` specifying the height and width of the original image.
+        shape: A rank-2 `Tensor` specifying the height (dim0) and width (dim1) of the original image.
         perspective: A boolean that enables the perspective and affine transformations.
         scaling: A boolean that enables the random scaling of the patch.
         rotation: A boolean that enables the random rotation of the patch.
@@ -459,11 +460,9 @@ def sample_homography(
 #     print('The rotation angle is:',angles[idx])
 #     print('The rotation matrix is:',rot_mat[idx])
 
-    # Rescale to actual size
-    pts1 = pts1 * torch.from_numpy(np.flip(shape.numpy(),0).copy()) # different convention [y, x]
-    pts2 = pts2 * torch.from_numpy(np.flip(shape.numpy(),0).copy()) # different convention [y, x]
-#     print('unsq pts1', pts1)
-#     print('unsq pts2', pts2)
+    # Rescale to actual size # different convention: shape is [y, x], flip it to [x,y]
+    pts1 = pts1 * torch.from_numpy(np.flip(shape.numpy(),0).copy()) 
+    pts2 = pts2 * torch.from_numpy(np.flip(shape.numpy(),0).copy())
     
     # cv2 to estimate
     [h, _] = cv2.findHomography(pts1.numpy(), pts2.numpy())
