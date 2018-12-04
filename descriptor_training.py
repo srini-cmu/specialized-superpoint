@@ -60,15 +60,6 @@ def log_settings(params):
     #params.writer = writer
     
 
-def batch_homography_adaptation(imgs,base_detector):
-    
-    batch = imgs.shape[0]
-    pix_locs = []
-    for b in range(batch):
-        pix_locs.append(homo_adapt_helper(imgs[b],base_detector))
-        
-    return pix_locs
-
 mp = 1
 mn = 0.2
 ld = 250
@@ -122,6 +113,8 @@ def feature_point_loss(ipt, pix_locs):
 
         #for each pixel location
         for i in range(len(dim_locs[b])):
+            if dim_locs[b][i][0] >= hc or dim_locs[b][i][0] < 0 or dim_locs[b][i][1] >= wc or dim_locs[b][i][1] < 0:
+                continue
             pts[b,dim_locs[b][i][0],dim_locs[b][i][1]] = 8*dim_val[b][i][0] +  dim_val[b][i][1]
 
     pts = pts.long()
@@ -131,20 +124,96 @@ def feature_point_loss(ipt, pix_locs):
     loss = F.cross_entropy(ipt.to(DEVICE),pts.long().to(DEVICE))
     return loss
 
+def warp_pseudo_gt_pts(homography,gt_pts):
+    
+    with torch.no_grad():
+        batch = len(gt_pts)
+        #homography [batch x 8]
+        #mat_homo [batch x 3 x 3]
+        mat_homo = flat2mat(homography)
+        res_pts = []
+
+        for b in range(batch):
+            pts = gt_pts[b]
+            pts = torch.cat((torch.from_numpy(pts).float(),torch.ones(len(pts),1)),dim=-1)
+
+            res = torch.matmul(mat_homo[b],pts.transpose(0,1))
+            res = res/res[2,:].unsqueeze(0)
+            
+            '''
+            if (res[0,:].numpy() > 160).any():
+                print('X out of bound ')
+                print(res[0,:])
+            if (res[1,:].numpy() > 120).any():
+                print('Y out of bound ')
+                print(res[1,:])
+            '''
+            res_pts.append(res[:2,:].transpose(0,1))
+        return res_pts
+
+    
+
+def generate_homography(params):
+    
+    plant_imgs = [f for f in os.listdir(params.dset_path) if f.endswith('.jpg')]
+    plant_imgs = plant_imgs[:int(len(plant_imgs)/2)]
+    
+    print('Loaded {} images for training'.format(len(plant_imgs)))
+              
+    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,
+                                                 downsample_percent=params.downsample_percent),
+                              batch_size=params.batch,shuffle=False,collate_fn=homography_collate_fn)
+    
+    base_detector = SuperPointNet()
+    base_detector.load_state_dict(torch.load(params.base_model_dict))
+    base_detector.to(DEVICE)
+    base_detector.eval()
+            
+    begin = time.time()
+        
+    for batch_idx, (imgs,fnames) in enumerate(train_loader):
+            
+        #get pix locs from homography adaptation
+        batch = imgs.shape[0]
+        for b in range(batch):
+            
+            while(True):
+                pix_locs = homo_adapt_helper(imgs[b].numpy(),base_detector)
+                if len(pix_locs) > 0:
+                    break
+                else:
+                    print('Rerunning homography!!!!')
+                    
+            #write it to file
+            np.save(fnames[b][:-4]+'_homography.npy',pix_locs)
+
+            percent_complete = params.batch * batch_idx * 100. / len(plant_imgs)
+            print('\x1b[2K\rElapsed:{0:.2f} min '.format((time.time()-begin)/60.)+
+                  'Batch {0:.2f} (idx:{1}) '.format(percent_complete,batch_idx) +
+                  'Writing: {}'.format(fnames[b][:-4]+'_homography.npy'),end='\r')
+
+
     
 def train(params):
     
     writer = SummaryWriter(log_dir='runs/'+params.runid)
 
 
-    plant_imgs = os.listdir(params.dset_path)
-    print('Loaded {} images for training'.format(len(plant_imgs)))
+    plant_imgs = [f for f in os.listdir(params.dset_path) if f.endswith('.jpg')]
+    plant_imgs = plant_imgs[:int(len(plant_imgs)/2)]
+
+    homographies = [f for f in os.listdir(params.dset_path) if f.endswith('.npy')]
+    homographies = homographies[:int(len(homographies))]
+
+    print('Loaded {} images and {} homographies for training'.format(len(plant_imgs),len(homographies)))
           
     if params.dev:
         #just choose 100 images for dev set
         plant_imgs = plant_imgs[:10]
         
-    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,downsample_percent=1.),
+    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,
+                                                 downsample_percent=params.downsample_percent,
+                                                homographies=homographies),
                               batch_size=params.batch,shuffle=True,collate_fn=plant_dataset_collate_fn)
     
     model = SuperPointNet()
@@ -172,7 +241,7 @@ def train(params):
         
         begin = time.time()
         
-        for batch_idx, (imgs,warps,homographies,didx) in enumerate(train_loader):
+        for batch_idx, (imgs,warps,homo_tfs,homo_adapt_pts,fnames) in enumerate(train_loader):
             
             #ipt bnum x 65 x hc x wc
             bnum = imgs.shape[0]
@@ -181,13 +250,10 @@ def train(params):
             ipt_warps,desc_warps = model(warps.float().unsqueeze(1).to(DEVICE))
             
             #Calculate the descriptor loss
-            desc_loss = descriptor_loss(desc_imgs,desc_warps,homographies)
-            
-            #get pix locs from homography adaptation
-            img_pix_locs = batch_homography_adaptation(imgs,base_detector)
-            warp_pix_locs = batch_homography_adaptation(warps,base_detector)
-            
-            img_feature_point_loss = feature_point_loss(ipt_imgs,img_pix_locs)
+            desc_loss = descriptor_loss(desc_imgs,desc_warps,homo_tfs)
+                        
+            img_feature_point_loss = feature_point_loss(ipt_imgs,homo_adapt_pts)
+            warp_pix_locs = warp_pseudo_gt_pts(homo_tfs,homo_adapt_pts)
             warp_feature_point_loss = feature_point_loss(ipt_warps,warp_pix_locs)
             
             loss = balance_factor * desc_loss + img_feature_point_loss + warp_feature_point_loss
@@ -204,7 +270,7 @@ def train(params):
             percent_complete = params.batch * batch_idx * 100. / len(plant_imgs)
             print('\x1b[2K\rEpoch {0} Loss:{1:.3f} '.format(e+1,loss.item())+
                   'Elapsed:{0:.2f} min '.format((time.time()-begin)/60.)+
-                  'Batch {0:.2f} (idx:{1})'.format(percent_complete,batch_idx),end='\r')
+                  'Batch {0:.2f}% (idx:{1})'.format(percent_complete,batch_idx),end='\r')
             img_count += bnum
 
         writer.add_scalar('train/loss',epoch_loss,e+1)
@@ -237,7 +303,9 @@ def main():
     parser.add_argument('--lr',default=1e-3,type=float)
     parser.add_argument('--batch',default=64,type=int)
     parser.add_argument('--runid')
-
+    parser.add_argument('--downsample-percent',default=0.1,type=float)
+    parser.add_argument('--generate-homography',action='store_true')
+    
     params = parser.parse_args()
 
     if params.runid is  None:
@@ -249,6 +317,9 @@ def main():
         params.dset_path = params.dset_path+'/high_res/'
     else:
         params.dset_path = params.dset_path+'/low_res/'
+        
+    if params.generate_homography:
+        generate_homography(params)
         
     if params.train:
         train(params)

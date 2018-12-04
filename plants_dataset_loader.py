@@ -16,14 +16,15 @@ from homography import *
 
 class PlantDatasetLoader(torch.utils.data.Dataset):
     
-    def __init__(self,dataset_path,plant_imgs,downsample_percent=1.):
+    def __init__(self,dataset_path,plant_imgs,downsample_percent=1.,homographies=None):
 
         self.dataset_path = dataset_path
         self.plant_imgs = plant_imgs
         self.dwn_smpl = downsample_percent
+        self.homographies = homographies
         
-        self.dim1 = int(400 * self.dwn_smpl) #476
-        self.dim2 = int(300 * self.dwn_smpl) #720
+        self.dim1 = int(1600 * self.dwn_smpl) #476
+        self.dim2 = int(1200 * self.dwn_smpl) #720
         print('Setting image resolution to {}x{}'.format(self.dim1,self.dim2))
         
     def __len__(self):
@@ -41,13 +42,25 @@ class PlantDatasetLoader(torch.utils.data.Dataset):
         filename = self.dataset_path + self.plant_imgs[idx]
         img = Image.open(filename).resize((self.dim1,self.dim2),Image.ANTIALIAS).convert('L') #load image as grayscale
         original = np.array(img)
-        warped,invH = self.warp_img(img)
-        return original,warped,invH,filename
+        
+        if self.homographies is not None:
+            #generate homography and warp image
+            warped,invH = self.warp_img(img)
+            #load the homography adaptation points
+            h = np.load(self.dataset_path + self.homographies[idx])
+            return original,warped,invH,h,filename
+        else:
+            return original,filename
                                 
     
 def plant_dataset_collate_fn(batch_list):
-    imgs,warps,homographies,fnames = zip(*batch_list)
+    imgs,warps,homographies,homo_adapt,fnames = zip(*batch_list)
     imgs = torch.cat([torch.tensor(img,dtype=torch.float).unsqueeze(0) for img in imgs])
     warps = torch.cat([torch.tensor(warp,dtype=torch.float).unsqueeze(0) for warp in warps])
     homographies = torch.cat([torch.tensor(h) for h in homographies])
-    return imgs,warps,homographies,fnames
+    return imgs,warps,homographies,homo_adapt,fnames
+
+def homography_collate_fn(batch_list):
+    imgs,fnames = zip(*batch_list)
+    imgs = torch.cat([torch.tensor(img,dtype=torch.float).unsqueeze(0) for img in imgs])
+    return imgs,fnames
