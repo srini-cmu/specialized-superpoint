@@ -399,8 +399,11 @@ def sample_homography(
             scaled_boolean = ( (scaled >= 0.) & (scaled < 1.) )
             valid = ( (scaled_boolean).sum(dim=(1,2)) == 8 ).nonzero().squeeze(1) # get the index of valid
         # get the index
-        idx = valid[torch.randint(low=0, high=valid.shape[0], size=(1,),dtype=torch.int32)[0]]
-        pts2 = scaled[idx]
+        if valid.shape[0] == 0:
+            pts2 = scaled[-1]
+        else:
+            idx = valid[torch.randint(low=0, high=valid.shape[0], size=(1,),dtype=torch.int32)[0]]
+            pts2 = scaled[idx]
         
 #     print('scale is:', scales[idx], 'center is:', center)
 #     print("pts2 after scaling: ", pts2)
@@ -447,8 +450,11 @@ def sample_homography(
             rotated_boolean = ( (rotated >= 0.) & (rotated < 1.) )
             valid = ( rotated_boolean.sum(dim=(1,2)) == 8 ).nonzero()#.squeeze(1) # get the index of valid
         # get the index
-        idx = valid[torch.randint(low=0, high=valid.shape[0], size=(1,), dtype=torch.int32)[0]]
-        pts2 = rotated[idx].squeeze(0)
+        if valid.shape[0] == 0:
+            pts2 = rotated[-1].squeeze(0)
+        else:
+            idx = valid[torch.randint(low=0, high=valid.shape[0], size=(1,), dtype=torch.int32)[0]]
+            pts2 = rotated[idx].squeeze(0)
 #     print('pts2 after rotation:',pts2)
 #     print('The rotation angle is:',angles[idx])
 #     print('The rotation matrix is:',rot_mat[idx])
