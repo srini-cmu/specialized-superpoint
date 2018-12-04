@@ -60,6 +60,15 @@ def log_settings(params):
     #params.writer = writer
     
 
+def batch_homography_adaptation(imgs,base_detector):
+    
+    batch = imgs.shape[0]
+    pix_locs = []
+    for b in range(batch):
+        pix_locs.append(homo_adapt_helper(imgs[b],base_detector))
+        
+    return pix_locs
+
 mp = 1
 mn = 0.2
 ld = 250
@@ -133,24 +142,32 @@ def train(params):
           
     if params.dev:
         #just choose 100 images for dev set
-        plant_imgs = plant_imgs[:100]
+        plant_imgs = plant_imgs[:10]
         
-    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,downsample_percent=0.2),
+    train_loader = DataLoader(PlantDatasetLoader(dataset_path=params.dset_path,plant_imgs=plant_imgs,downsample_percent=1.),
                               batch_size=params.batch,shuffle=True,collate_fn=plant_dataset_collate_fn)
     
     model = SuperPointNet()
     #load base model weights
     model.load_state_dict(torch.load(params.base_model_dict))
     model.to(DEVICE)
+    model.train()
     
-    
+    base_detector = SuperPointNet()
+    base_detector.load_state_dict(torch.load(params.base_model_dict))
+    base_detector.to(DEVICE)
+    base_detector.eval()
+        
     optimizer = torch.optim.Adam(model.parameters(),lr=params.lr,weight_decay=params.weightdecay)
     
     balance_factor = 1.
     
-    for e in range(params.epoch):
+    for e in range(params.resume_epoch,params.epoch):
         
         epoch_loss = 0
+        epoch_img_floss = 0
+        epoch_warp_floss = 0
+        epoch_desc_loss = 0
         img_count = 0
         
         begin = time.time()
@@ -164,27 +181,39 @@ def train(params):
             ipt_warps,desc_warps = model(warps.float().unsqueeze(1).to(DEVICE))
             
             #Calculate the descriptor loss
-            descriptor_loss = descriptor_loss(desc_imgs,desc_warps,homographies)
+            desc_loss = descriptor_loss(desc_imgs,desc_warps,homographies)
+            
+            #get pix locs from homography adaptation
+            img_pix_locs = batch_homography_adaptation(imgs,base_detector)
+            warp_pix_locs = batch_homography_adaptation(warps,base_detector)
             
             img_feature_point_loss = feature_point_loss(ipt_imgs,img_pix_locs)
             warp_feature_point_loss = feature_point_loss(ipt_warps,warp_pix_locs)
             
-            loss = balance_factor * descriptor_loss + img_feature_point_loss + warp_feature_point_loss
-            
+            loss = balance_factor * desc_loss + img_feature_point_loss + warp_feature_point_loss
+
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
 
+            epoch_img_floss += img_feature_point_loss.item()
+            epoch_warp_floss += warp_feature_point_loss.item()
+            epoch_desc_loss += desc_loss.item()
             epoch_loss += loss.item()
             
             percent_complete = params.batch * batch_idx * 100. / len(plant_imgs)
             print('\x1b[2K\rEpoch {0} Loss:{1:.3f} '.format(e+1,loss.item())+
-                  'Elapsed:{0:.2f}min '.format((time.time()-begin)/60.)+
+                  'Elapsed:{0:.2f} min '.format((time.time()-begin)/60.)+
                   'Batch {0:.2f} (idx:{1})'.format(percent_complete,batch_idx),end='\r')
             img_count += bnum
 
+        writer.add_scalar('train/loss',epoch_loss,e+1)
+        writer.add_scalar('train/img_floss',epoch_img_floss,e+1)
+        writer.add_scalar('train/warp_floss',epoch_warp_floss,e+1)
+        writer.add_scalar('train/desc_loss',epoch_desc_loss,e+1)
+        
         elapsed = (time.time() - begin)/60.
-        print('\x1b[2K\rEnd of epoch {0} Loss:{1:.5f} Took:{2:.2f}min'.format(e+1,epoch_loss,elapsed))
+        print('\x1b[2K\rEnd of epoch {0} Loss:{1:.5f} Took:{2:.2f} min'.format(e+1,epoch_loss,elapsed))
         
         save_model(model,e,epoch_loss,params.runid)
         
@@ -200,9 +229,10 @@ def main():
     parser.add_argument('--model')
     parser.add_argument('--base-model-dict',default='e_400_a_10.8703.dict')
     parser.add_argument('--dset-path',default='datasets/plant_data/train')
-    parser.add_argument('--high-res',action='store_true') #will use low-res by default
+    parser.add_argument('--high-res',action='store_false') #will use high-res by default
     parser.add_argument('--outfile',default='validation_output')
     parser.add_argument('--epoch',default=1000,type=int)
+    parser.add_argument('--resume-epoch',default=0,type=int)
     parser.add_argument('--weightdecay',default=1e-6,type=float)
     parser.add_argument('--lr',default=1e-3,type=float)
     parser.add_argument('--batch',default=64,type=int)

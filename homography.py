@@ -24,6 +24,8 @@ import sys
 from shapes_loader import *
 from base_model import *
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 # In[55]:
 
 def warp_point(homo, pts, need_mask=True):
@@ -191,7 +193,6 @@ def homo_adapt_helper(image, net):
                 px.append(x)
                 py.append(y)
     return np.transpose(np.array([px,py]))
-
 
 def homography_adaptation(image, net, config):
     """
@@ -484,6 +485,7 @@ def sample_homography(
 # res = res/res[2]
 # print(res)
 
+<<<<<<< HEAD
 # # test homography sampling
 # homography = sample_homography(shape)
 
@@ -498,6 +500,8 @@ def sample_homography(
 # print(res)
 
 
+=======
+>>>>>>> ef7ddea293ba714f8d99d8dae70c5cf2135d651e
 # In[8]:
 
 
