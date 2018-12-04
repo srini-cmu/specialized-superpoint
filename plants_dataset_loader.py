@@ -22,8 +22,8 @@ class PlantDatasetLoader(torch.utils.data.Dataset):
         self.plant_imgs = plant_imgs
         self.dwn_smpl = downsample_percent
         
-        self.dim1 = int(476 * self.dwn_smpl)
-        self.dim2 = int(720 * self.dwn_smpl)
+        self.dim1 = int(400 * self.dwn_smpl) #476
+        self.dim2 = int(300 * self.dwn_smpl) #720
         print('Setting image resolution to {}x{}'.format(self.dim1,self.dim2))
         
     def __len__(self):
