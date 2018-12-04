@@ -169,9 +169,9 @@ def homo_adapt_helper(image, net):
                     # now 0.9 is used, which means that as long as one warped image says this is 
                     # a feature point, the function outputs it.
     config = dict()
-    config['threshold'] = 0.4 # the threshold to select points in every warped image
+    config['threshold'] = 0.2 # the threshold to select points in every warped image
     config['aggregation'] = 'pts' # 'mean'
-    config['num'] = 50 # how many homography adaptation to perform per image
+    config['num'] = 25 #50 # how many homography adaptation to perform per image
     config['patch_ratio'] = 0.8
     # run homography adaptation
     net.eval()
