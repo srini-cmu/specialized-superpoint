@@ -174,35 +174,54 @@ def homo_adapt_helper(image, net):
     OUTPUT: pts of size (pt_sz, 2), [x,y] 
     """
     # hyper paramter
-    threshold = 0.9 # threshold to select final aggregation. Here it can only be int (1,2,3,...). 
+    threshold = 0.01 # threshold to select final aggregation. Here it can only be int (1,2,3,...). 
                     # 1 means that one warped image indicates this pixel as feature points
                     # 2 means that two warped image indicates this pixel as feature points
                     # now 0.9 is used, which means that as long as one warped image says this is 
                     # a feature point, the function outputs it.
     config = dict()
     config['threshold'] = 0.2 # the threshold to select points in every warped image
-    config['aggregation'] = 'pts' # 'mean'
-    config['num'] = 25 #50 # how many homography adaptation to perform per image
-    config['patch_ratio'] = 0.8
+    config['aggregation'] = 'mean' # 'mean'
+    config['num'] = 100 #50 # how many homography adaptation to perform per image
+    config['patch_ratio'] = 0.65
     # run homography adaptation
     net.eval()
     with torch.no_grad():
         a = homography_adaptation(Image.fromarray(image).convert('L'), net, config)
     prob = a['prob']
-    width = prob.shape[3]*8
-    prob = prob.squeeze().view(64, prob.shape[2]*prob.shape[3])
-    prob_list = []
-    for col in range(prob.shape[1]):
-        prob_list.append(prob[:,col].view(8,8))
-    prob = torch.cat(torch.cat(prob_list, dim=1).split(width,1))
-    
+    # get px py
     px = []
     py = []
-    for y in range(prob.shape[0]):
-        for x in range(prob.shape[1]):
-            if prob[y][x] > threshold:
-                px.append(x)
-                py.append(y)
+    # pts aggregation
+    if config['aggregation'] == 'pts':
+	    width = prob.shape[3]*8
+	    prob = prob.squeeze().view(64, prob.shape[2]*prob.shape[3])
+	    prob_list = []
+	    for col in range(prob.shape[1]):
+	        prob_list.append(prob[:,col].view(8,8))
+	    prob = torch.cat(torch.cat(prob_list, dim=1).split(width,1))
+	    
+	    for y in range(prob.shape[0]):
+	        for x in range(prob.shape[1]):
+	            if prob[y][x] > threshold:
+	                px.append(x)
+	                py.append(y)
+	# max/mean aggregation
+    else:
+        prob_sm = F.softmax(prob,dim=1)
+        prob_sm = prob_sm[:,:-1,:,:]
+        #find the max entry and confidence
+        prob_conf,prob_locs = prob_sm.max(dim=1)
+
+        prob_mask = prob_conf > threshold	
+
+        for y in range(prob.shape[2]):
+            for x in range(prob.shape[3]):
+                if prob_mask[0,y,x] == 1:
+                    #location in the image
+                    px.append(x*8 +(prob_locs[0,y,x]/8))
+                    py.append(y*8 + (prob_locs[0,y,x]%8))
+
     return np.transpose(np.array([px,py]))
 
 def homography_adaptation(image, net, config):
@@ -328,7 +347,7 @@ def homography_adaptation(image, net, config):
         probs_split = probs.squeeze(0).split(8,2)
         probs_stack = [st.reshape(1, small_height, 1, 8*8) for st in probs_split]
         probs = torch.cat(probs_stack,2).permute(0,3,1,2) # 1, 64, 37, 50
-        probs = torch.cat((probs,dust_bin),dim=1)
+        probs = torch.cat((probs, dust_bin[0].unsqueeze(0)),dim=1)
     
     return {'prob':probs, 'patches':patches, 'images':images, 'counts':counts}
 
