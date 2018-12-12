@@ -167,23 +167,24 @@ def show_results(results, num_to_show):
         plt.imshow(counts[:,:,i+1])
 
 
-def homo_adapt_helper(image, net):
+def homo_adapt_helper(image, net, config):
     """
     INPUT: image should be a numpy array of size [height, width].. 
             net is the base detector
     OUTPUT: pts of size (pt_sz, 2), [x,y] 
     """
     # hyper paramter
-    threshold = 0.01 # threshold to select final aggregation. Here it can only be int (1,2,3,...). 
+    #config['threashold_aggrated'] 
+                    # threshold to select final aggregation. Here it can only be int (1,2,3,...). 
                     # 1 means that one warped image indicates this pixel as feature points
                     # 2 means that two warped image indicates this pixel as feature points
                     # now 0.9 is used, which means that as long as one warped image says this is 
                     # a feature point, the function outputs it.
-    config = dict()
-    config['threshold'] = 0.2 # the threshold to select points in every warped image
-    config['aggregation'] = 'mean' # 'mean'
-    config['num'] = 100 #50 # how many homography adaptation to perform per image
-    config['patch_ratio'] = 0.65
+    # config = dict()
+    # config['threshold'] = 0.2 # the threshold to select points in every warped image
+    # config['aggregation'] = 'mean' # 'mean'
+    # config['num'] = 100 #50 # how many homography adaptation to perform per image
+    # config['patch_ratio'] = 0.65
     # run homography adaptation
     net.eval()
     with torch.no_grad():
@@ -203,7 +204,7 @@ def homo_adapt_helper(image, net):
 	    
 	    for y in range(prob.shape[0]):
 	        for x in range(prob.shape[1]):
-	            if prob[y][x] > threshold:
+	            if prob[y][x] > config['threashold_aggrated']:
 	                px.append(x)
 	                py.append(y)
 	# max/mean aggregation
@@ -213,14 +214,13 @@ def homo_adapt_helper(image, net):
         #find the max entry and confidence
         prob_conf,prob_locs = prob_sm.max(dim=1)
 
-        prob_mask = prob_conf > threshold	
-
+        prob_mask = prob_conf > config['threashold_aggrated']
         for y in range(prob.shape[2]):
             for x in range(prob.shape[3]):
                 if prob_mask[0,y,x] == 1:
                     #location in the image
-                    px.append(x*8 +(prob_locs[0,y,x]/8))
-                    py.append(y*8 + (prob_locs[0,y,x]%8))
+                    py.append(y*8 + (prob_locs[0,y,x]/8))
+                    px.append(x*8 + (prob_locs[0,y,x]%8))
 
     return np.transpose(np.array([px,py]))
 
@@ -240,9 +240,13 @@ def homography_adaptation(image, net, config):
     shape = torch.Tensor([image.shape[0], image.shape[1]]).type(torch.FloatTensor)
     # inference on original image
     probs, _ = net(image.float().unsqueeze(0).unsqueeze(1).cuda())
+    #print('probs shape',probs.shape)
+    #probs = F.softmax(probs,dim=1)
     # get the dust_bin out first, later cat in
     dust_bin = probs[:,-1,:,:].unsqueeze(0).cpu() # 1x1x37x50
-    #
+    dust_bin = dust_bin/1000
+    
+    #print('dust_bin:',dust_bin)
     small_height = probs.shape[2] # 37
     small_width = probs.shape[3] # 50
     #
@@ -273,11 +277,11 @@ def homography_adaptation(image, net, config):
         image_warped = torch.from_numpy(np.array(test_warped))
         # inference on the warped image
         ipt_patch, _ = net(image_warped.unsqueeze(0).unsqueeze(1).float().cuda())
+        #ipt_patch = F.softmax(ipt_patch,dim=1)
         # aggregate the probablities:
         # Get rid of dust bin: 1 x 65 x 37 x 50 -> 1 x 64 x 37 x50 -> 1 x 1 x 296 x 400
         # apply warp to the patch and concatenate
 #         prob = ipt_patch[:,:-1,:,:].view(1, 1, ipt_patch.shape[2]*8, ipt_patch.shape[3]*8).cpu()
-        
         # 1,64,37,50 -> 296,400
         this_dust_bin = ipt_patch[:,-1,:,:].unsqueeze(1).cpu() # 1 x 1 x 37 x 50
         prob = ipt_patch[:,:-1,:,:].squeeze().view(64, small_width*small_height)
@@ -300,6 +304,8 @@ def homography_adaptation(image, net, config):
                         method=Image.PERSPECTIVE, 
                         data=test_inv_H, #test_inv_H,# test_H, 
                         resample=Image.NEAREST)
+        # clear up unused pixels
+        prob_proj[prob_proj==0] = -1e5;
         # aggregate prob
         dust_bin = torch.cat((dust_bin,this_dust_bin),dim=0)
         # aggregate prob
@@ -312,18 +318,12 @@ def homography_adaptation(image, net, config):
         images = torch.cat((images,image_warped.unsqueeze(-1).cpu()),dim=-1)
         # aggregate patch
         patches += [patch.cpu()]
-    #
-#     print('probs_to_cat shape',probs_to_cat.shape)
-    # aggregation done 
-    counts_sum = torch.sum(counts, dim=-1)
-    max_prob,_ = torch.max(probs_to_cat, dim=-1)
-    mean_prob = torch.sum(probs_to_cat, dim=-1) / counts_sum
+    # start aggregation
+    counts = counts / 255
+    # print('probs_to_cat shape', probs_to_cat.shape) # 1,1,H,W,N
+    # print('counts shape', counts.shape) # 1,1,H,W,N
     # check aggregation method
-    if config['aggregation'] == 'max':
-        probs = max_prob
-    elif config['aggregation'] == 'mean':
-        probs = mean_prob
-    elif config['aggregation'] == 'pts':
+    if config['aggregation'] == 'pts':
         prob_sum = torch.zeros(1,64,small_height,small_width)
         for h in range(probs_to_cat.shape[-1]):
             prob_to_cat = probs_to_cat[:,:,:,:,h]
@@ -331,7 +331,7 @@ def homography_adaptation(image, net, config):
             prob_stack = [st.reshape(1, small_height, 1, 8*8) for st in prob_split]
             prob_to_cat = torch.cat(prob_stack,2).permute(0,3,1,2)
             prob_to_cat = torch.cat((prob_to_cat, dust_bin[h].unsqueeze(1)),dim=1)
-            prob_to_cat = F.softmax(prob_to_cat, dim=1)
+            #prob_to_cat = F.softmax(prob_to_cat, dim=1)
 #             print (torch.sum(prob_to_cat,dim=1))
             prob_to_cat = prob_to_cat[:,:-1,:,:]
             mask = prob_to_cat > config['threshold']
@@ -339,15 +339,49 @@ def homography_adaptation(image, net, config):
             prob_to_cat[1-mask] = 0
             prob_sum += prob_to_cat
         probs = prob_sum
+    # 'max' or 'mean'
+    elif config['aggregation'] == 'max' or config['aggregation'] == 'mean':
+        prob_sum = torch.zeros(1,65,small_height,small_width)
+        prob_maxx = torch.zeros(1,config['num']+1,65,small_height,small_width)
+        count_sum = torch.zeros(1,65,small_height,small_width)
+        if config['aggregation'] == 'mean':
+            probs_to_cat[probs_to_cat==-1e5] = 0.0
+        # 1, 1, H, W, N
+        for h in range(probs_to_cat.shape[-1]):
+            # probs_to_cat
+            # from 1, 1, H, W
+            prob_to_cat = probs_to_cat[:,:,:,:,h]
+            prob_split = prob_to_cat.squeeze(0).split(8,2)
+            prob_stack = [st.reshape(1, small_height, 1, 8*8) for st in prob_split]
+            prob_to_cat = torch.cat(prob_stack,2).permute(0,3,1,2)
+            prob_to_cat = torch.cat((prob_to_cat, dust_bin[0].unsqueeze(1)),dim=1)
+            # to 1, 65, H/8, W/8
+            # counts
+            # from 1, 1, H, W
+            count = counts[:,:,:,:,h]
+            count_split = count.squeeze(0).split(8,2)
+            count_stack = [st.reshape(1, small_height, 1, 8*8) for st in count_split]
+            count = torch.cat(count_stack,2).permute(0,3,1,2)
+            # to 1, 64, H/8, W/8
+            count = torch.cat((count,torch.ones(1,1,small_height,small_width)),dim=1)
+            # to 1, 65, H/8, W/8
+            if config['aggregation'] == 'max':
+                prob_maxx[0,h,:,:,:] = prob_to_cat 
+                #raise ValueError('Unkown aggregation method: {}'.format(config['aggregation']))
+            elif config['aggregation'] == 'mean':
+                prob_sum += prob_to_cat
+                count_sum += count
+        if config['aggregation'] == 'mean':
+            #probs = torch.sum(prob_sum, dim=-1) / counts_sum
+            probs = prob_sum / count_sum
+            # print(prob_sum[0,:,13,16])
+            # print(count_sum[0,:,13,16])
+            # print(probs[0,:,13,16])
+        else:
+            probs, _ = torch.max(prob_maxx,dim=1)
+
     else:
         raise ValueError('Unkown aggregation method: {}'.format(config['aggregation']))
-    # cat back the dust bin
-    if config['aggregation'] != 'pts':
-        # 1, 1, 296, 400
-        probs_split = probs.squeeze(0).split(8,2)
-        probs_stack = [st.reshape(1, small_height, 1, 8*8) for st in probs_split]
-        probs = torch.cat(probs_stack,2).permute(0,3,1,2) # 1, 64, 37, 50
-        probs = torch.cat((probs, dust_bin[0].unsqueeze(0)),dim=1)
     
     return {'prob':probs, 'patches':patches, 'images':images, 'counts':counts}
 
